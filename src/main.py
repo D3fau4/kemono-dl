@@ -96,7 +96,9 @@ class downloader:
 
     def get_creators(self, domain:str):
         # get site creators
+        
         creators_api = f"https://{domain}/api/v1/creators/"
+        print(creators_api)
         logger.debug(f"Getting creator json from {creators_api}")
         return self.session.get(url=creators_api, cookies=self.cookies, headers=self.headers, timeout=self.timeout).json()
 
@@ -128,13 +130,27 @@ class downloader:
     def get_post(self, url:str):
         found = re.search(r'(https://(kemono\.su|coomer\.su)/)(([^/]+)/user/([^/]+)($|/post/[^/]+))', url)
         if not found:
-            logger.error(f"Unable to find url parameters for {url}")
-            return
-        api = f"{found.group(1)}api/v1/{found.group(3)}"
-        site = found.group(2)
-        service = found.group(4)
-        user_id = found.group(5)
-        is_post = found.group(6)
+            if "discord" not in url:
+                logger.error(f"Unable to find url parameters for {url}")
+                return
+            else:
+                found = re.search(r'(https://(kemono\.su|coomer\.su)/discord/server/([^/]+)/([^/]+))', url)
+                if not found:
+                    logger.error(f"Unable to find url parameters for {url}")
+                    return
+                
+                api = f"https://kemono.su/api/v1/discord/channel/{found.group(4)}"
+                user_id = found.group(3)
+                service = "discord"
+                is_post = False
+                site = "kemono.su"
+        else:
+            api = f"{found.group(1)}api/v1/{found.group(3)}"
+            site = found.group(2)
+            service = found.group(4)
+            user_id = found.group(5)
+            is_post = found.group(6)
+
         user = self.get_user(user_id, service)
         if not user:
             logger.error(f"Unable to find user info in creators list | {service} | {user_id}")
@@ -151,6 +167,13 @@ class downloader:
                 json = self.session.get(url=api, cookies=self.cookies, headers=self.headers, timeout=self.timeout).json()
             else:
                 logger.debug(f"Requesting user json from: {api}?o={chunk}")
+
+                # si api contiene la palabra discord, remplaza user con channel
+                if "discord" in api:
+                    
+                    api = api.replace("user", "channel")
+                    print(api)
+
                 json = self.session.get(url=f"{api}?o={chunk}", cookies=self.cookies, headers=self.headers, timeout=self.timeout).json()
             if not json:
                 if is_post:
@@ -284,14 +307,16 @@ class downloader:
 
     def clean_post(self, post:dict, user:dict, domain:str):
         new_post = {}
+        if post is str:
+            print(post)
         # set post variables
         new_post['post_variables'] = {}
-        new_post['post_variables']['title'] = post['title']
+        new_post['post_variables']['title'] = post.get('title', 'No Title')
         new_post['post_variables']['id'] = post['id']
-        new_post['post_variables']['user_id'] = post['user']
+        new_post['post_variables']['user_id'] = post.get('user', user['id'])
         new_post['post_variables']['username'] = user['name']
         new_post['post_variables']['site'] = domain
-        new_post['post_variables']['service'] = post['service']
+        new_post['post_variables']['service'] = post.get('service', user['service'])
         new_post['post_variables']['added'] = self.parse_date_string(post['added'], self.date_strf_pattern)
         new_post['post_variables']['updated'] = self.parse_date_string(post['edited'], self.date_strf_pattern)
         new_post['post_variables']['user_updated'] = self.parse_date_string(user['updated'], self.date_strf_pattern)
@@ -302,7 +327,7 @@ class downloader:
         new_post['attachments'] = []
         if self.attachments:
             # add post file to front of attachments list if it doesn't already exist
-            if post['file'] and not post['file'] in post['attachments']:
+            if 'file' in post and post['file'] and post['file'] not in post['attachments']:
                 post['attachments'].insert(0, post['file'])
             # loop over attachments and set file variables
             for index, attachment in enumerate(post['attachments']):
@@ -328,12 +353,12 @@ class downloader:
         comment_soup = self.get_comments(new_post['post_variables']) if self.comments else ''
 
         new_post['content'] = {'text':None,'file_variables':None, 'file_path':None}
-        embed = "{subject}\n{url}\n{description}".format(**post['embed']) if post['embed'] else ''
+        embed = "{subject}\n{url}\n{description}".format(**post['embed']) if 'embed' in post and post['embed'] else ''
         if (self.content or self.comments) and (content_soup or comment_soup or embed):
             self.compile_post_content(new_post, content_soup.prettify(), comment_soup, embed)
 
         new_post['links'] = {'text':None,'file_variables':None, 'file_path':None}
-        embed_url = "{url}\n".format(**post['embed']) if post['embed'] else ''
+        embed_url = "{url}\n".format(**post['embed']) if 'embed' in post and post['embed'] else ''
         if self.extract_links:
             self.compile_content_links(new_post, content_soup, embed_url)
 

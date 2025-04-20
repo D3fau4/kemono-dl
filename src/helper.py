@@ -7,6 +7,10 @@ def parse_url(url):
     # parse urls
     downloadable = re.search(r'^https://(kemono\.su|coomer\.su)/([^/]+)/user/([^/]+)($|/post/([^/]+)$)',url)
     if not downloadable:
+
+        discord_match = re.search(r'https://kemono\.su/discord/server/\d+/(\d+)', url)
+        if discord_match:
+            return "kemono.su"
         return None
     return downloadable.group(1)
 
