@@ -1,34 +1,46 @@
 import logging
 
-from .args import get_args
-
-args = get_args()
-
-if args['verbose']:
-    # clear log file
-    file = open('debug.log','w')
-    file.close()
-
-logging.getLogger("requests").setLevel(logging.WARNING)
-logging.getLogger("urllib3").setLevel(logging.WARNING)
+DEFAULT_LOG_FILE = "debug.log"
 
 logger = logging.getLogger('kemono-dl')
 
-logger.setLevel(logging.INFO)
-if args['quiet']:
-    logger.setLevel(logging.WARNING)
-if args['verbose']:
-    logger.setLevel(logging.DEBUG)
 
-file_format = logging.Formatter('%(asctime)s:%(levelname)s:%(message)s')
-stream_format = logging.Formatter('%(levelname)s:%(message)s')
+def configure_logger(args: dict, log_file: str = DEFAULT_LOG_FILE) -> None:
+    """Configure logging using already parsed arguments.
 
-file_handler = logging.FileHandler('debug.log', encoding="utf-16")
-file_handler.setFormatter(file_format)
+    Parameters
+    ----------
+    args : dict
+        Parsed command-line arguments.
+    log_file : str, optional
+        Name of the verbose log file. Defaults to :data:`DEFAULT_LOG_FILE`.
+    """
 
-stream_handler = logging.StreamHandler()
-stream_handler.setFormatter(stream_format)
+    # Remove any existing handlers to avoid duplicate logs when reconfigured
+    logger.handlers.clear()
 
-if args['verbose']:
-    logger.addHandler(file_handler)
-logger.addHandler(stream_handler)
+    if args.get('verbose'):
+        # clear log file
+        with open(log_file, 'w'):
+            pass
+
+    logging.getLogger("requests").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+
+    logger.setLevel(logging.INFO)
+    if args.get('quiet'):
+        logger.setLevel(logging.WARNING)
+    if args.get('verbose'):
+        logger.setLevel(logging.DEBUG)
+
+    file_format = logging.Formatter('%(asctime)s:%(levelname)s:%(message)s')
+    stream_format = logging.Formatter('%(levelname)s:%(message)s')
+
+    if args.get('verbose'):
+        file_handler = logging.FileHandler(log_file, encoding="utf-16")
+        file_handler.setFormatter(file_format)
+        logger.addHandler(file_handler)
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(stream_format)
+    logger.addHandler(stream_handler)
