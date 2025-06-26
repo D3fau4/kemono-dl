@@ -10,7 +10,7 @@ from io import BytesIO
 import json
 
 from .args import get_args
-from .logger import logger
+from .logger import logger, configure_logger
 from .version import __version__
 from .helper import get_file_hash, print_download_bar, check_date, parse_url, compile_post_path, compile_file_path
 from .my_yt_dlp import my_yt_dlp
@@ -716,4 +716,6 @@ class downloader:
 
 
 def main():
-    downloader(get_args())
+    args = get_args()
+    configure_logger(args)
+    downloader(args)
