@@ -307,7 +307,7 @@ class downloader:
 
     def clean_post(self, post:dict, user:dict, domain:str):
         new_post = {}
-        if post is str:
+        if isinstance(post, str):
             print(post)
         # set post variables
         new_post['post_variables'] = {}
