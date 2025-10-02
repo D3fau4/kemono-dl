@@ -128,22 +128,22 @@ class downloader:
                 self.get_post(f"https://{domain}/{favorite['service']}/user/{favorite['id']}")
 
     def get_post(self, url:str):
-        found = re.search(r'(https://(kemono\.su|coomer\.su)/)(([^/]+)/user/([^/]+)($|/post/[^/]+))', url)
+        found = re.search(r'(https://(kemono\.cr|coomer\.st)/)(([^/]+)/user/([^/]+)($|/post/[^/]+))', url)
         if not found:
             if "discord" not in url:
                 logger.error(f"Unable to find url parameters for {url}")
                 return
             else:
-                found = re.search(r'(https://(kemono\.su|coomer\.su)/discord/server/([^/]+)/([^/]+))', url)
+                found = re.search(r'(https://(kemono\.cr|coomer\.st)/discord/server/([^/]+)/([^/]+))', url)
                 if not found:
                     logger.error(f"Unable to find url parameters for {url}")
                     return
                 
-                api = f"https://kemono.su/api/v1/discord/channel/{found.group(4)}"
+                api = f"https://kemono.cr/api/v1/discord/channel/{found.group(4)}"
                 user_id = found.group(3)
                 service = "discord"
                 is_post = False
-                site = "kemono.su"
+                site = "kemono.cr"
         else:
             api = f"{found.group(1)}api/v1/{found.group(3)}"
             site = found.group(2)
@@ -649,11 +649,11 @@ class downloader:
             if not domain in domains: domains.append(domain)
 
         if self.k_fav_posts or self.k_fav_users:
-            if not 'kemono.su' in domains:
-                domains.append('kemono.su')
+            if not 'kemono.cr' in domains:
+                domains.append('kemono.cr')
         if self.c_fav_posts or self.c_fav_users:
-            if not 'coomer.su' in domains:
-                domains.append('coomer.su')
+            if not 'coomer.st' in domains:
+                domains.append('coomer.st')
 
         for domain in domains:
             try:
@@ -666,24 +666,24 @@ class downloader:
 
         if self.k_fav_posts:
             try:
-                self.get_favorites('kemono.su', 'post', retry=self.retry)
+                self.get_favorites('kemono.cr', 'post', retry=self.retry)
             except:
-                logger.exception("Unable to get favorite posts from kemono.su")
+                logger.exception("Unable to get favorite posts from kemono.cr")
         if self.c_fav_posts:
             try:
-                self.get_favorites('coomer.su', 'post')
+                self.get_favorites('coomer.st', 'post')
             except:
-                logger.exception("Unable to get favorite posts from coomer.su")
+                logger.exception("Unable to get favorite posts from coomer.st")
         if self.k_fav_users:
             try:
-                self.get_favorites('kemono.su', 'artist', self.k_fav_users)
+                self.get_favorites('kemono.cr', 'artist', self.k_fav_users)
             except:
-                logger.exception("Unable to get favorite users from kemono.su")
+                logger.exception("Unable to get favorite users from kemono.cr")
         if self.c_fav_users:
             try:
-                self.get_favorites('coomer.su', 'artist', self.c_fav_users)
+                self.get_favorites('coomer.st', 'artist', self.c_fav_users)
             except:
-                logger.exception("Unable to get favorite users from coomer.su")
+                logger.exception("Unable to get favorite users from coomer.st")
 
         for url in urls:
             try:
