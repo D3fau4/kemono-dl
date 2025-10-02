@@ -152,7 +152,9 @@ class downloader:
             site = found.group(2)
             service = found.group(4)
             user_id = found.group(5)
-            is_post = found.group(6)
+            is_post = bool(found.group(6))
+            if not is_post:
+                api = f"{api}/posts"
 
         user = self.get_user(user_id, service)
         if not user:
@@ -166,27 +168,43 @@ class downloader:
         first = True
         while True:
             if is_post:
-                logger.debug(f"Requesting post json from: {api}")
-                json = self.session.get(url=api, cookies=self.cookies, headers=self.headers, timeout=self.timeout).json()
+                request_url = api
+                logger.debug(f"Requesting post json from: {request_url}")
             else:
-                logger.debug(f"Requesting user json from: {api}?o={chunk}")
-
                 # si api contiene la palabra discord, remplaza user con channel
                 if "discord" in api:
-                    
                     api = api.replace("user", "channel")
                     print(api)
-
-                json = self.session.get(url=f"{api}?o={chunk}", cookies=self.cookies, headers=self.headers, timeout=self.timeout).json()
-            if not json:
+                request_url = f"{api}?o={chunk}"
+                logger.debug(f"Requesting user json from: {request_url}")
+            response = self.session.get(url=request_url, cookies=self.cookies, headers=self.headers, timeout=self.timeout)
+            try:
+                payload = response.json()
+            except ValueError:
+                logger.error(f"Unable to decode json response from {request_url} | {response.status_code} {response.reason}")
+                return
+            if isinstance(payload, dict) and 'error' in payload:
+                error_message = payload['error']
+                if not is_post and chunk > 0 and 'Offset' in error_message:
+                    logger.info(f"{error_message} | {request_url}")
+                else:
+                    logger.error(f"API error for {request_url} | {error_message}")
+                return
+            if not response.ok:
+                logger.error(f"{response.status_code} {response.reason} | Unable to fetch json from {request_url}")
+                return
+            if isinstance(payload, dict):
+                payload = [payload]
+            if not payload:
                 if is_post:
-                    logger.error(f"Unable to find post json for {api}")
+                    logger.error(f"Unable to find post json for {request_url}")
                 elif chunk == 0:
-                    logger.error(f"Unable to find user json for {api}?o={chunk}")
+                    logger.error(f"Unable to find user json for {request_url}")
                 return # completed
-            for post in json:
+            for post in payload:
                 post = self.clean_post(post, user, site)
-                # only download once
+                if not post:
+                    continue
                 if not is_post and first:
                     self.download_icon_banner(post, self.icon_banner)
                     if self.dms:
@@ -202,7 +220,7 @@ class downloader:
                 except:
                     logger.exception("Unable to download post | service:{service} user_id:{user_id} post_id:{id}".format(**post['post_variables']))
                 self.comp_posts.append("https://{site}/{service}/user/{user_id}/post/{id}".format(**post['post_variables']))
-            if len(json) < 50:
+            if len(payload) < 50:
                 return # completed
             chunk += 50
 
@@ -291,7 +309,7 @@ class downloader:
             response = self.session.get(url=post_url, allow_redirects=True, headers=self.headers, cookies=self.cookies, timeout=self.timeout)
             page_soup = BeautifulSoup(response.text, 'html.parser')
             comment_soup = page_soup.find("div", {"class": "post__comments"})
-            no_comments = re.search('([^ ]+ does not support comment scraping yet\.|No comments found for this post\.)',comment_soup.text)
+            no_comments = re.search(r'([^ ]+ does not support comment scraping yet\.|No comments found for this post\.)', comment_soup.text)
             if no_comments:
                 logger.debug(no_comments.group(1).strip())
                 return ''
@@ -309,59 +327,117 @@ class downloader:
         post['content']['file_path'] = compile_file_path(post['post_path'], post['post_variables'], post['content']['file_variables'], self.other_filename_template, self.restrict_ascii)
 
     def clean_post(self, post:dict, user:dict, domain:str):
+        if not isinstance(post, dict):
+            logger.error(f"Skipping post | Unexpected payload type: {type(post).__name__}")
+            return None
+
+        post_data = post
+        if 'post' in post and 'id' not in post and isinstance(post['post'], dict):
+            post_data = {**post['post']}
+            base_attachments = post.get('attachments')
+            if isinstance(base_attachments, list) and base_attachments:
+                post_data['attachments'] = base_attachments
+        if any(key not in post_data for key in ('added', 'edited', 'content')):
+            detail_service = post_data.get('service', user['service'])
+            detail_user_id = post_data.get('user', user['id'])
+            detail_url = f"https://{domain}/api/v1/{detail_service}/user/{detail_user_id}/post/{post_data['id']}"
+            logger.debug(f"Requesting post detail json from: {detail_url}")
+            try:
+                detail_response = self.session.get(url=detail_url, cookies=self.cookies, headers=self.headers, timeout=self.timeout)
+            except requests.RequestException as exc:
+                logger.warning(f"Request error while fetching post detail {detail_url} | {exc}")
+            else:
+                detail_payload = None
+                try:
+                    detail_payload = detail_response.json()
+                except ValueError:
+                    logger.warning(f"Unable to decode post detail json from {detail_url}")
+                if not detail_response.ok:
+                    error_message = ''
+                    if isinstance(detail_payload, dict):
+                        error_message = detail_payload.get('error', '')
+                    if error_message:
+                        logger.warning(f"API error for {detail_url} | {error_message}")
+                    else:
+                        logger.warning(f"{detail_response.status_code} {detail_response.reason} | Unable to fetch post detail from {detail_url}")
+                elif isinstance(detail_payload, dict):
+                    detail_post = detail_payload.get('post') if 'post' in detail_payload else detail_payload
+                    if isinstance(detail_post, dict):
+                        merged = {**post_data, **detail_post}
+                        attachments_override = detail_payload.get('attachments')
+                        if isinstance(attachments_override, list) and attachments_override:
+                            merged['attachments'] = attachments_override
+                        post_data = merged
+
         new_post = {}
-        if isinstance(post, str):
-            print(post)
-        # set post variables
+        default_date = '1970-01-01T00:00:00'
+        published_value = post_data.get('published') or post_data.get('added') or default_date
+        added_value = post_data.get('added') or published_value
+        updated_value = post_data.get('edited') or post_data.get('added') or post_data.get('published') or user.get('updated') or default_date
+        user_updated_value = user.get('updated') or added_value or default_date
+
         new_post['post_variables'] = {}
-        new_post['post_variables']['title'] = post.get('title', 'No Title')
-        new_post['post_variables']['id'] = post['id']
-        new_post['post_variables']['user_id'] = post.get('user', user['id'])
-        new_post['post_variables']['username'] = user['name']
+        new_post['post_variables']['title'] = post_data.get('title', 'No Title')
+        post_id = post_data.get('id')
+        if not post_id:
+            logger.error("Skipping post | Missing post id")
+            return None
+        new_post['post_variables']['id'] = post_id
+        new_post['post_variables']['user_id'] = post_data.get('user', user['id'])
+        new_post['post_variables']['username'] = user.get('name', new_post['post_variables']['user_id'])
         new_post['post_variables']['site'] = domain
-        new_post['post_variables']['service'] = post.get('service', user['service'])
-        new_post['post_variables']['added'] = self.parse_date_string(post['added'], self.date_strf_pattern)
-        new_post['post_variables']['updated'] = self.parse_date_string(post['edited'], self.date_strf_pattern)
-        new_post['post_variables']['user_updated'] = self.parse_date_string(user['updated'], self.date_strf_pattern)
-        new_post['post_variables']['published'] = self.parse_date_string(post['published'], self.date_strf_pattern)
+        new_post['post_variables']['service'] = post_data.get('service', user['service'])
+        new_post['post_variables']['added'] = self.parse_date_string(added_value, self.date_strf_pattern)
+        new_post['post_variables']['updated'] = self.parse_date_string(updated_value, self.date_strf_pattern)
+        new_post['post_variables']['user_updated'] = self.parse_date_string(user_updated_value, self.date_strf_pattern)
+        new_post['post_variables']['published'] = self.parse_date_string(published_value, self.date_strf_pattern)
 
         new_post['post_path'] = compile_post_path(new_post['post_variables'], self.download_path_template, self.restrict_ascii)
 
         new_post['attachments'] = []
+        attachments = list(post_data.get('attachments') or [])
+        if post_data.get('file') and post_data['file'] not in attachments:
+            attachments.insert(0, post_data['file'])
         if self.attachments:
-            # add post file to front of attachments list if it doesn't already exist
-            if 'file' in post and post['file'] and post['file'] not in post['attachments']:
-                post['attachments'].insert(0, post['file'])
-            # loop over attachments and set file variables
-            for index, attachment in enumerate(post['attachments']):
+            attachments_count = len(attachments)
+            padding = len(str(attachments_count or 1))
+            for index, attachment in enumerate(attachments):
+                name = attachment.get('name')
+                path_value = attachment.get('path')
+                if not name or not path_value:
+                    logger.debug(f"Skipping attachment with missing data for post {post_id}")
+                    continue
                 file = {}
-                filename, file_extension = os.path.splitext(attachment['name'])
-                m = re.search(r'[a-zA-Z0-9]{64}', attachment['path'])
+                filename, file_extension = os.path.splitext(name)
+                m = re.search(r'[a-zA-Z0-9]{64}', path_value)
                 file_hash = m.group(0) if m else None
                 file['file_variables'] = {
                     'filename': filename,
                     'ext': file_extension[1:],
-                    'url': f"https://{domain}/data{attachment['path']}?f={attachment['name']}",
+                    'url': f"https://{domain}/data{path_value}?f={name}",
                     'hash': file_hash,
-                    'index': f"{index + 1}".zfill(len(str(len(post['attachments']))))
+                    'index': f"{index + 1}".zfill(padding)
                 }
                 file['file_path'] = compile_file_path(new_post['post_path'], new_post['post_variables'], file['file_variables'], self.filename_template, self.restrict_ascii)
                 new_post['attachments'].append(file)
 
         new_post['inline_images'] = []
-        content_soup = BeautifulSoup(post['content'], 'html.parser')
+        content_html = post_data.get('content') or ''
+        content_soup = BeautifulSoup(content_html, 'html.parser')
         if self.inline:
             content_soup = self.get_inline_images(new_post, content_soup)
 
         comment_soup = self.get_comments(new_post['post_variables']) if self.comments else ''
 
         new_post['content'] = {'text':None,'file_variables':None, 'file_path':None}
-        embed = "{subject}\n{url}\n{description}".format(**post['embed']) if 'embed' in post and post['embed'] else ''
-        if (self.content or self.comments) and (content_soup or comment_soup or embed):
+        embed_data = post_data.get('embed') or {}
+        embed_parts = [embed_data.get('subject'), embed_data.get('url'), embed_data.get('description')]
+        embed = "\n".join(part for part in embed_parts if part)
+        if (self.content or self.comments) and (content_html or comment_soup or embed):
             self.compile_post_content(new_post, content_soup.prettify(), comment_soup, embed)
 
         new_post['links'] = {'text':None,'file_variables':None, 'file_path':None}
-        embed_url = "{url}\n".format(**post['embed']) if 'embed' in post and post['embed'] else ''
+        embed_url = f"{embed_data.get('url')}\n" if embed_data.get('url') else ""
         if self.extract_links:
             self.compile_content_links(new_post, content_soup, embed_url)
 
