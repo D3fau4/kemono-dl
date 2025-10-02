@@ -366,7 +366,23 @@ class downloader:
                         merged = {**post_data, **detail_post}
                         attachments_override = detail_payload.get('attachments')
                         if isinstance(attachments_override, list) and attachments_override:
-                            merged['attachments'] = attachments_override
+                            merged_attachments = {}
+                            def _merge_attachment(item):
+                                if not isinstance(item, dict):
+                                    return
+                                key = item.get('path') or item.get('name') or item.get('stem')
+                                if not key:
+                                    return
+                                existing = merged_attachments.get(key)
+                                if existing:
+                                    existing.update({k: v for k, v in item.items() if v is not None})
+                                else:
+                                    merged_attachments[key] = dict(item)
+                            for attachment in merged.get('attachments') or []:
+                                _merge_attachment(attachment)
+                            for attachment in attachments_override:
+                                _merge_attachment(attachment)
+                            merged['attachments'] = list(merged_attachments.values())
                         post_data = merged
 
         new_post = {}
@@ -395,18 +411,32 @@ class downloader:
         new_post['post_path'] = compile_post_path(new_post['post_variables'], self.download_path_template, self.restrict_ascii)
 
         new_post['attachments'] = []
-        attachments = list(post_data.get('attachments') or [])
-        if post_data.get('file') and post_data['file'] not in attachments:
-            attachments.insert(0, post_data['file'])
+        base_attachments = post_data.get('attachments') or []
+        attachments = [dict(attachment) for attachment in base_attachments if isinstance(attachment, dict)]
+        file_info = post_data.get('file')
+        if isinstance(file_info, dict):
+            file_path = file_info.get('path')
+            if file_path and any(att.get('path') == file_path for att in attachments):
+                for attachment in attachments:
+                    if attachment.get('path') == file_path:
+                        attachment.update({k: v for k, v in file_info.items() if v is not None})
+                        break
+            else:
+                attachments.insert(0, dict(file_info))
         if self.attachments:
-            attachments_count = len(attachments)
-            padding = len(str(attachments_count or 1))
-            for index, attachment in enumerate(attachments):
+            valid_attachments = []
+            for attachment in attachments:
                 name = attachment.get('name')
                 path_value = attachment.get('path')
                 if not name or not path_value:
                     logger.debug(f"Skipping attachment with missing data for post {post_id}")
                     continue
+                valid_attachments.append(attachment)
+            attachments_count = len(valid_attachments)
+            padding = max(1, len(str(attachments_count))) if attachments_count else 1
+            for index, attachment in enumerate(valid_attachments):
+                name = attachment['name']
+                path_value = attachment['path']
                 file = {}
                 filename, file_extension = os.path.splitext(name)
                 m = re.search(r'[a-zA-Z0-9]{64}', path_value)
