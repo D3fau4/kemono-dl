@@ -25,7 +25,10 @@ class downloader:
         self.creators = []
 
         # requests variables
-        self.headers = {'User-Agent': args['user_agent']}
+        self.headers = {
+            'User-Agent': args['user_agent'],
+            'Accept': 'text/css',
+        }
         self.cookies = args['cookies']
         self.timeout = 300
 
@@ -613,7 +616,7 @@ class downloader:
 
         # check file size
         if self.min_size or self.max_size:
-            file_size = requests.get(file['file_variables']['url'], cookies=self.cookies, stream=True).headers.get('content-length', 0)
+            file_size = requests.get(file['file_variables']['url'], cookies=self.cookies, stream=True, headers=self.headers).headers.get('content-length', 0)
             if int(file_size) == 0:
                     logger.info(f"Skipping: {os.path.split(file['file_path'])[1]} | File size not included in file header")
                     return True
